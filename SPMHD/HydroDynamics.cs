@@ -16,6 +16,7 @@ public class HydroDynamics
 
     public Vector2 bounds = new(100f, 100f);
     public int boundaryParticles = 0;
+    public float wallForce = 10f;
 
     public float smoothingRadius = 10f;
     public float norm = 1f / (PI * 5000f);
@@ -178,38 +179,40 @@ public class HydroDynamics
         }
     }
 
-    public void BounceOnCollision()
+    public void ApplyBoundaryConditions()
     {
         for (uint i = 0; i < particleCount; i++)
         {
             Vector2 pos = positions[i];
+            Vector2 dist = bounds - pos;
+            Vector2 acc = accelerations[i];
 
-            if (pos.X > bounds.X)
+            if (dist.X < smoothingRadius)
             {
-                pos.X = bounds.X;
-                velocities[i].X *= - damping;
+                acc.X -= wallForce * (smoothingRadius - dist.X) * (smoothingRadius - dist.X);
             }
-            else if (pos.X < 0f)
+            if (pos.X < smoothingRadius)
             {
-                pos.X = 0f;
-                velocities[i].X *= - damping;
+                acc.X += wallForce * (smoothingRadius - pos.X) * (smoothingRadius - pos.X);
             }
 
-            if (pos.Y > bounds.Y)
+            if (dist.Y < smoothingRadius)
             {
-                pos.Y = bounds.Y;
-                velocities[i].Y *= - damping;
+                acc.Y -= wallForce * (smoothingRadius - dist.Y) * (smoothingRadius - dist.Y);
             }
-            else if (pos.Y < 0f)
+            if (pos.Y < smoothingRadius)
             {
-                pos.Y = 0f;
-                velocities[i].Y *= - damping;
+                acc.Y += wallForce * (smoothingRadius - pos.Y) * (smoothingRadius - pos.Y);
             }
+
+            accelerations[i] = acc;
         }
     }
     
     public void Integrate()
     {
+        ApplyBoundaryConditions();
+
         for (uint i = 0; i < particleCount; i++)
         {
             // Eulerian integration
@@ -218,7 +221,6 @@ public class HydroDynamics
             positions[i] += velocities[i] * deltaTime;
         }
 
-        BounceOnCollision();
     }
 }
 
