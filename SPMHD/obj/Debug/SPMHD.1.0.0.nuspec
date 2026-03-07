@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>SPMHD</id>
+    <version>1.0.0</version>
+    <authors>SPMHD</authors>
+    <description>Package Description</description>
+    <repository type="git" />
+    <dependencies>
+      <group targetFramework="net8.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="C:\Users\denni\source\repos\SPMHD\SPMHD\bin\Debug\net8.0\SPMHD.runtimeconfig.json" target="lib\net8.0\SPMHD.runtimeconfig.json" />
+    <file src="C:\Users\denni\source\repos\SPMHD\SPMHD\bin\Debug\net8.0\SPMHD.dll" target="lib\net8.0\SPMHD.dll" />
+  </files>
+</package>
