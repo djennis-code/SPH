@@ -1,4 +1,4 @@
-﻿using Raylib_cs;
+using Raylib_cs;
 using System;
 using System.Formats.Asn1;
 using System.Numerics;
@@ -15,11 +15,13 @@ public class HydroDynamics
     public float particleRadius = 1f;
 
     public Vector2 bounds = new(100f, 100f);
+    public int boundaryParticles = 0;
 
     public float smoothingRadius = 10f;
     public float norm = 1f / (PI * 5000f);
     public float dNorm = 1f / (PI * 666.67f);
 
+    public float gamma = 7f; // gamma = 7 for water
     public float refDensity = 1f;
     public float pressureConst = 1f;
     public float pressureExt = 1f;
@@ -43,9 +45,36 @@ public class HydroDynamics
         densities = new float[particleCount];
     }
 
+    public void InitBoundary()
+    {
+        int nx = (int) (bounds.X / smoothingRadius);
+        int ny = (int) (bounds.Y / smoothingRadius);
+
+        boundaryParticles = 2 * nx + 2 * ny;
+        boundaryPositions = new Vector2[boundaryParticles];
+
+        for (int x = 0; x < nx; x++)
+        {
+            Vector2 pos1 = new(x * smoothingRadius, 0f);
+            Vector2 pos2 = new(x * smoothingRadius, bounds.Y);
+
+            boundaryPositions[x + 0] = pos1;
+            boundaryPositions[x + 1] = pos2;
+        }
+
+        for (int y = 0; y < ny; y++)
+        {
+            Vector2 pos1 = new(0f, y * smoothingRadius);
+            Vector2 pos2 = new(bounds.X, y * smoothingRadius);
+
+            boundaryPositions[2 * nx + y + 0] = pos1;
+            boundaryPositions[2 * nx + y + 1] = pos2;
+        }
+    }
+
     public void InitParticles()
     {
-        int gridLength = SqrtSearch(particleCount);
+        int gridLength = (int) MathF.Sqrt(particleCount);
         float gridSpacing = 5f * particleRadius;
 
         for (uint i = 0; i <= gridLength; i++)
@@ -78,14 +107,14 @@ public class HydroDynamics
 
     public void NormaliseKernels()
     {
-        norm = 2f / (PI * MathF.Pow(smoothingRadius, 4));
-        dNorm = 3f / (2f * PI * MathF.Pow(smoothingRadius, 3));
+        norm = 15f / (PI * MathF.Pow(smoothingRadius, 4));
+        dNorm = 45f / (PI * MathF.Pow(smoothingRadius, 3));
     }
 
     public float DensityToPressure(float density)
     {
         float y = density / refDensity;
-        return pressureConst * (y * y * y * y * y * y * y - 1f) + pressureExt; // gamma = 7 for water
+        return pressureConst * (MathF.Pow(y, gamma) - 1f) + pressureExt;
     }
 
     public void ComputeDensities()
@@ -112,6 +141,7 @@ public class HydroDynamics
 
     public void ComputeAccelerations()
     {
+        Vector2 g = new Vector2(0f, 2.0f);
         float s2 = smoothingRadius * smoothingRadius;
 
         for (uint i = 0; i < particleCount; i++)
@@ -133,25 +163,25 @@ public class HydroDynamics
 
                 if (dist2 >= s2) continue;
 
-                float dist = MathF.Sqrt(dist2);
+                float dist = MathF.Max(MathF.Sqrt(dist2), 0.1f);
                 Vector2 dir = offset / dist;
 
                 float weight = Kernel(dist);
                 float gradient = DerivativeKernel(dist);
 
-                float sharedPressure = (DensityToPressure(rhoi) + DensityToPressure(rhoj)) * 0.5f;
+                float sharedPressure = (DensityToPressure(rhoi) / (rhoi * rhoi)  + DensityToPressure(rhoj) / (rhoj * rhoj));
 
-                vis += weight * (vel - velocities[j]);
-                force += dir * gradient * sharedPressure / rhoj;
-            }
-            accelerations[i] = (force - vis * viscosity) / rhoi;
+                vis += weight * particleMass * (vel - velocities[j]) / rhoj;
+                force += - dir * gradient * sharedPressure * particleMass;
+            }   
+            accelerations[i] = (force - vis * viscosity + g) / rhoi;
         }
     }
 
     public void BounceOnCollision()
     {
         for (uint i = 0; i < particleCount; i++)
-        {   
+        {
             Vector2 pos = positions[i];
 
             if (pos.X > bounds.X)
@@ -180,52 +210,16 @@ public class HydroDynamics
     
     public void Integrate()
     {
-        Vector2 g = new Vector2(0f, 1f);
         for (uint i = 0; i < particleCount; i++)
         {
             // Eulerian integration
             
-            velocities[i] += (accelerations[i] + g) * deltaTime;
+            velocities[i] += accelerations[i] * deltaTime;
             positions[i] += velocities[i] * deltaTime;
         }
 
         BounceOnCollision();
     }
-
-    public void DrawParticles()
-    {
-        for (uint i = 0;i < particleCount;i++)
-        {
-            Vector2 pos = positions[i];
-            Raylib.DrawCircle((int)pos.X, (int)pos.Y, particleRadius, Color.White);
-        }
-    }
-
-    public int SqrtSearch(int num)
-    {
-        int upper = num;
-        int lower = 0;
-        int root = lower;
-
-        for (int i = 0; i < num; i++)
-        {
-            root = (upper + lower) / 2;
-
-            if (root * root == num) break;
-
-            else if (root * root < num)
-            {
-                lower = root;
-            }
-            else
-            {
-                upper = root;
-            }
-        }
-
-        return root;
-    }
 }
-
 
 
