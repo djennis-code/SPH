@@ -15,7 +15,6 @@ public class HydroDynamics
     public float particleRadius = 1f;
 
     public Vector2 bounds = new(100f, 100f);
-    public int boundaryParticles = 0;
 
     public float smoothingRadius = 10f;
     public float norm = 1f / (PI * 5000f);
@@ -42,33 +41,6 @@ public class HydroDynamics
         velocities = new Vector2[particleCount];
         accelerations = new Vector2[particleCount];
         densities = new float[particleCount];
-    }
-
-    public void InitBoundary()
-    {
-        int nx = (int) (bounds.X / smoothingRadius);
-        int ny = (int) (bounds.Y / smoothingRadius);
-
-        boundaryParticles = 2 * nx + 2 * ny;
-        boundaryPositions = new Vector2[boundaryParticles];
-
-        for (int x = 0; x < nx; x++)
-        {
-            Vector2 pos1 = new(x * smoothingRadius, 0f);
-            Vector2 pos2 = new(x * smoothingRadius, bounds.Y);
-
-            boundaryPositions[x + 0] = pos1;
-            boundaryPositions[x + 1] = pos2;
-        }
-
-        for (int y = 0; y < ny; y++)
-        {
-            Vector2 pos1 = new(0f, y * smoothingRadius);
-            Vector2 pos2 = new(bounds.Y, y * smoothingRadius);
-
-            boundaryPositions[2 * nx + y + 0] = pos1;
-            boundaryPositions[2 * nx + y + 1] = pos2;
-        }
     }
 
     public void InitParticles()
@@ -254,5 +226,6 @@ public class HydroDynamics
         return root;
     }
 }
+
 
 
