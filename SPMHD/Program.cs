@@ -5,14 +5,16 @@ namespace SPH;
 
 internal static class Program
 {
-    public static Vector2 domainSize = new(1.0f, 1.0f); //  meter
+    public static Vector2 domainSize = new(2.0f, 1.0f); //  meter
+
     public static float upScale = 800f; //  pixels / meter
     public static Vector2 windowSize = upScale * domainSize;
-    public static HydroDynamics simulation = new HydroDynamics();
+
+    public static HydroDynamics simulation = new();
 
     public static void InitSPH()
     {
-        simulation.particleCount = 900;
+        simulation.particleCount = 36*36;
         simulation.smoothingRadius = 8e-2f; //  meter
         simulation.NormaliseKernels();
 
@@ -27,14 +29,15 @@ internal static class Program
         simulation.bounds = domainSize;
 
         simulation.wallForce = 1e8f; //  meter / frame^2
-        simulation.gridSpacing = 0.5f * simulation.smoothingRadius; //  meter
+        simulation.gridSpacing = 0.2f * simulation.smoothingRadius; //  meter
         simulation.gravity = 1e4f; //  meter / frame^2
 
         simulation.deltaTime = 1e-4f; //  seconds / frame
-        simulation.viscosity = 1e7f; //  Pascal * frame
+        simulation.viscosity = 5e6f; //  Pascal * frame
 
         simulation.CreateBuffers();
         simulation.InitParticles();
+        simulation.InitHashMap();
     }
 
     public static void Main()
