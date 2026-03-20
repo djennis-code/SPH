@@ -5,27 +5,31 @@ namespace SPH;
 
 internal static class Program
 {
-    public static Vector2 windowSize = new(1200, 800);
+    public static Vector2 windowSize = new(1280, 720);
     public static HydroDynamics simulation = new HydroDynamics();
+
+
+    // Lambda = 1280 px, kappa = 2 Pi / Lambda ~ 0.005 / px.
+    // Omega = Viscosity * kappa^2 ~ 2.5e-5 / px.
 
     public static void InitSPH()
     {
         simulation.particleCount = 900;
         simulation.particleMass = 1.0f;
-        simulation.particleRadius = 5.0f;
+        simulation.particleRadius = 3.0f;
         simulation.bounds = windowSize;
+        simulation.wallForce = 100f;
 
-        simulation.smoothingRadius = 75.0f;
+        simulation.smoothingRadius = 50.0f;
         simulation.NormaliseKernels();
 
         simulation.gamma = 7f;
-        simulation.refDensity = 1.2f;
-        simulation.pressureConst = simulation.refDensity * 6f / simulation.gamma; // B = rho * cs^2 / gamma
-        simulation.pressureExt = 1.0f;
+        simulation.refDensity = 0.3f;
+        simulation.pressureConst = simulation.refDensity * 500.0f / simulation.gamma; // B = rho * cs^2 / gamma
+        simulation.pressureExt = 0.0f;
 
-        simulation.deltaTime = 0.05f;
-        simulation.damping = 0.5f;
-        simulation.viscosity = 0.5f;
+        simulation.deltaTime = 0.03f; // seconds // frame
+        simulation.viscosity = 1.0f; // Pa * frame
 
         simulation.CreateBuffers();
         simulation.InitParticles();
@@ -43,9 +47,7 @@ internal static class Program
 
             Raylib.ClearBackground(Color.Black);
 
-            simulation.ComputeDensities();
-            simulation.ComputeAccelerations();
-            simulation.Integrate();
+            simulation.IntegrateVerlet();
             RenderParticles();
 
             Raylib.DrawFPS(5, 5);
@@ -63,7 +65,7 @@ internal static class Program
 
         for (uint i = 0; i < count; i++)
         {
-            Color col = i != 550 ? Color.White : Color.Red;
+            Color col = Color.Blue;
             Vector2 pos = positions[i];
             Raylib.DrawCircle((int)pos.X, (int)pos.Y, radius, col);
         }
