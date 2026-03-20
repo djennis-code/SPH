@@ -5,31 +5,33 @@ namespace SPH;
 
 internal static class Program
 {
-    public static Vector2 windowSize = new(1280, 720);
+    public static Vector2 domainSize = new(1.0f, 1.0f); //  meter
+    public static float upScale = 800f; //  pixels / meter
+    public static Vector2 windowSize = upScale * domainSize;
     public static HydroDynamics simulation = new HydroDynamics();
-
-
-    // Lambda = 1280 px, kappa = 2 Pi / Lambda ~ 0.005 / px.
-    // Omega = Viscosity * kappa^2 ~ 2.5e-5 / px.
 
     public static void InitSPH()
     {
         simulation.particleCount = 900;
-        simulation.particleMass = 1.0f;
-        simulation.particleRadius = 3.0f;
-        simulation.bounds = windowSize;
-        simulation.wallForce = 100f;
-
-        simulation.smoothingRadius = 50.0f;
+        simulation.smoothingRadius = 8e-2f; //  meter
         simulation.NormaliseKernels();
 
-        simulation.gamma = 7f;
-        simulation.refDensity = 0.3f;
-        simulation.pressureConst = simulation.refDensity * 500.0f / simulation.gamma; // B = rho * cs^2 / gamma
-        simulation.pressureExt = 0.0f;
+        simulation.gamma = 7f; //  exponent
+        simulation.refDensity = 1e3f; //  Kg / meter^2
+        simulation.cSound = 1.5e1f; //  meter / frame
+        simulation.pressureConst = simulation.refDensity * simulation.cSound * simulation.cSound / simulation.gamma; // Pascal; B = rho * cs^2 / gamma
+        simulation.pressureExt = 1e5f; //  Pascal
 
-        simulation.deltaTime = 0.03f; // seconds // frame
-        simulation.viscosity = 1.0f; // Pa * frame
+        simulation.particleMass = simulation.refDensity * (simulation.smoothingRadius * simulation.smoothingRadius * 3.14f); //  Kg; m = rho * V
+        simulation.particleRadius = 4.0f; //  pixels
+        simulation.bounds = domainSize;
+
+        simulation.wallForce = 1e8f; //  meter / frame^2
+        simulation.gridSpacing = 0.5f * simulation.smoothingRadius; //  meter
+        simulation.gravity = 1e4f; //  meter / frame^2
+
+        simulation.deltaTime = 1e-4f; //  seconds / frame
+        simulation.viscosity = 1e7f; //  Pascal * frame
 
         simulation.CreateBuffers();
         simulation.InitParticles();
@@ -66,7 +68,8 @@ internal static class Program
         for (uint i = 0; i < count; i++)
         {
             Color col = Color.Blue;
-            Vector2 pos = positions[i];
+            Vector2 pos = upScale * positions[i];
+
             Raylib.DrawCircle((int)pos.X, (int)pos.Y, radius, col);
         }
     }
