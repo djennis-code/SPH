@@ -14,16 +14,18 @@ public class HydroDynamics
     public float particleMass = 1f;
     public float particleRadius = 1f;
 
-    public Vector2 bounds = new(100f, 100f);
-    public int boundaryParticles = 0;
+    public Vector2 bounds = new(1f, 1f);
     public float wallForce = 10f;
+    public float gridSpacing = 2e-2f;
+    public float gravity = 0f;
 
-    public float smoothingRadius = 10f;
+    public float smoothingRadius = 1e-2f;
     public float norm = 1f / (PI * 5000f);
     public float dNorm = 1f / (PI * 666.67f);
 
     public float gamma = 7f; // gamma = 7 for water
     public float refDensity = 1f;
+    public float cSound = 1f;
     public float pressureConst = 1f;
     public float pressureExt = 1f;
 
@@ -48,7 +50,6 @@ public class HydroDynamics
     public void InitParticles()
     {
         int gridLength = (int) MathF.Sqrt(particleCount);
-        float gridSpacing = 6f * particleRadius;
 
         for (uint i = 0; i <= gridLength; i++)
         {
@@ -114,7 +115,7 @@ public class HydroDynamics
 
     public void ComputeAccelerations()
     {
-        Vector2 g = new Vector2(0f, 10.0f);
+        Vector2 g = new Vector2(0f, gravity);
         float s2 = smoothingRadius * smoothingRadius;
 
         for (uint i = 0; i < particleCount; i++)
@@ -147,7 +148,7 @@ public class HydroDynamics
                 vis += weight * particleMass * (vel - velocities[j]) / rhoj;
                 force += - dir * gradient * sharedPressure * particleMass;
             }   
-            accelerations[i] = (force - vis * viscosity + g) / rhoi;
+            accelerations[i] = (force - vis * viscosity) / rhoi + g;
         }
     }
 
