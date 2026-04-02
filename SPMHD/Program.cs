@@ -1,13 +1,14 @@
 using Raylib_cs;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace SPH;
 
 internal static class Program
 {
-    public static Vector2 domainSize = new(1.5f, 1.0f); //  meter
+    public static Vector2 domainSize = new(1.0f, 1.0f); //  meter
 
-    public static float upScale = 720f; //  pixels / meter
+    public static float upScale = 800f; //  pixels / meter
     public static Vector2 windowSize = upScale * domainSize;
 
     public static float currTime = 0f;
@@ -16,28 +17,31 @@ internal static class Program
 
     public static void InitSPH()
     {
-        simulation.particleCount = 4900; // perfect squares are nice to work with
+        simulation.particleCount = 2500; // perfect squares are nice to work with
         simulation.smoothingRadius = 4e-2f; //  meter
         simulation.NormaliseKernels();
 
         simulation.domainThickness = 1f;
         simulation.wallForce = 1e5f; //  meter / second^2; rigidity of the walls
         simulation.gridSpacing = 0.2f * simulation.smoothingRadius; //  meter
-        simulation.gravity = 9.81f; //  meter / second^2
+        simulation.gravity = 0f; //  meter / second^2
 
         simulation.gamma = 7f; //  exponent
         simulation.refDensity = 1e3f; //  Kg / meter^3
         simulation.cSound = 1.5e2f; //  meter / second
-        simulation.pressureConst = simulation.refDensity * simulation.cSound * simulation.cSound / simulation.gamma; // Pascal; B = rho * cs^2 / gamma
+        simulation.pressureConst = simulation.refDensity * simulation.cSound * simulation.cSound / simulation.gamma; // Pascal; K = rho * cs^2 / gamma
         simulation.pressureExt = 1e5f; //  Pascal
 
-        simulation.particleMass = simulation.refDensity * simulation.gridSpacing * simulation.gridSpacing; //  Kg; m = rho * V
-        simulation.particleRadius = 4.0f; //  pixels    
-        simulation.bounds = domainSize;
-        simulation.spawnOffset = new Vector2(0.0f, 0.0f);
+        simulation.relMu = 1e0f; // relative permeability
+        simulation.Bstrength = 0f; // Tesla
+        simulation.Bdir = new(0f, 1f); // direction of the magnetic field
 
-        simulation.deltaTime = 1f * simulation.smoothingRadius / simulation.cSound; //  seconds / frame
-        simulation.viscosity = 1e-1f; //  Pascal * second
+        simulation.particleMass = simulation.refDensity * simulation.gridSpacing * simulation.gridSpacing; //  Kg; m = rho * V 
+        simulation.bounds = domainSize;
+        simulation.spawnOffset = new(0.0f, 0.0f); // position of the fluids center of mass
+
+        simulation.deltaTime = 0.2f * simulation.smoothingRadius / simulation.cSound; //  seconds / frame
+        simulation.viscosity = 1e0f; //  Pascal * second
 
         simulation.CreateBuffers();
         simulation.InitParticles();
@@ -48,7 +52,11 @@ internal static class Program
     {
         InitSPH();
 
+        int gridSize = (int) (upScale * simulation.smoothingRadius / 2);
+
         Raylib.InitWindow((int)windowSize.X, (int)windowSize.Y, "Smoothed Particle Magneto Dynamics");
+
+        simulation.IntegrateVerlet();
 
         while (!Raylib.WindowShouldClose())
         {
@@ -56,10 +64,11 @@ internal static class Program
 
             Raylib.ClearBackground(Color.Black);
 
-            simulation.IntegrateEuler();
-            
-            RenderDensity(5);
-            //RenderParticles();
+            simulation.IntegrateVerlet();
+
+            //RenderDensity(gridSize);
+            RenderDivergenceB(gridSize);
+            RenderParticles();
 
             Raylib.DrawFPS(5, 5);
             Raylib.EndDrawing();
@@ -75,7 +84,6 @@ internal static class Program
     public static void RenderParticles()
     {
         int count = simulation.particleCount;
-        float radius = simulation.particleRadius;
         Vector2[] positions = simulation.positions;
 
         for (uint i = 0; i < count; i++)
@@ -107,7 +115,7 @@ internal static class Program
                 int index = y * screenWidth + x;
                 Vector2 samplePosition = new Vector2(x * dx, y * dy) * fac;
 
-                densityBuffer[index] = simulation.ComputeDensityAtPoint(samplePosition);
+                densityBuffer[index] = simulation.SampleDensity(samplePosition);
             });
         });
 
@@ -122,19 +130,67 @@ internal static class Program
             Color col = DensityToColor(density, refDensity);
             Raylib.DrawRectangle(x, y, dx, dy, col);
         }
-
-        // Print total density to see whether continuity relation holds true
-        //float totalDensity = densityBuffer.Sum();
-        //Console.Write("Total Density: ");
-        //Console.WriteLine(totalDensity);
-        // Answer: yes (close enough, may fluctuate by 0.1%)
     }
 
     public static Color DensityToColor(float density, float refDensity)
     {
-        float fac = density / refDensity;
-        int b = (int) (fac * 127);
-        return new Color(0, 0, b, 255);
+        Color low = new(0, 0, 255, 255);
+        Color mid = new(0, 0, 0, 255);
+        Color high = new(255, 0, 0, 255);
+
+        float fac = (density / refDensity) - 1f;
+
+        if (fac < 0) return Raylib.ColorLerp(mid, low, -fac);
+        else return Raylib.ColorLerp(mid, high, fac);
+    }
+
+    public static void RenderDivergenceB(int granularity)
+    {
+        float fac = 1.0f / upScale;
+
+        int dx = granularity;
+        int dy = granularity;
+        int screenWidth = (int)windowSize.X / dx;
+        int screenHeight = (int)windowSize.Y / dy;
+        int n = screenWidth * screenHeight;
+
+        float[] divergenceBuffer = new float[n];
+
+        Parallel.For(0, screenWidth, x =>
+        {
+            Parallel.For(0, screenHeight, y =>
+            {
+                int index = y * screenWidth + x;
+                Vector2 samplePosition = new Vector2(x * dx, y * dy) * fac;
+
+                divergenceBuffer[index] = simulation.SampleDivB(samplePosition);
+            });
+        });
+
+        for (int i = 0; i < n; i++)
+        {
+            float div = divergenceBuffer[i];
+
+            int y = (int)(i / screenWidth) * dy;
+            int x = (i % screenWidth) * dx;
+
+
+            Color col = DivergenceToColor(div);
+            Raylib.DrawRectangle(x, y, dx, dy, col);
+        }
+    }
+
+    public static Color DivergenceToColor(float div)
+    {
+        Color low = new(0, 0, 255, 255);
+        Color mid = new(0, 0, 0, 255);
+        Color high = new(255, 0, 0, 255);
+
+        float B = simulation.relMu / simulation.Bstrength;
+        float fac = Math.Clamp(1e-2f * div / B, -1f, 1f);
+
+        if (fac < 0) return Raylib.ColorLerp(mid, low, -fac);
+        else return Raylib.ColorLerp(mid, high, fac);
     }
 }
 
