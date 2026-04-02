@@ -3,6 +3,7 @@ using System;
 using System.Formats.Asn1;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 
 namespace SPH;
 
@@ -15,10 +16,10 @@ public struct Vector2i(int x, int y)
 public class HydroDynamics
 {
     public const float PI = 3.141593f;
+    public const float tol = 1e-3f;
     
     public int particleCount = 25;
     public float particleMass = 1f;
-    public float particleRadius = 1f;
 
     public Vector2 spawnOffset = new Vector2(0f, 0f);
     public Vector2 bounds = new(1f, 1f);
@@ -36,6 +37,11 @@ public class HydroDynamics
     public float pressureConst = 1f;
     public float pressureExt = 1f;
 
+    public float mu = 1.2e-6f; //  Henry / meter
+    public float relMu = 1f;
+    public float Bstrength = 1f;
+    public Vector2 Bdir = new(0f, 1f);
+
     public float deltaTime = 1f;
     public float viscosity = 1f;
     public float gravity = 0f;
@@ -43,6 +49,7 @@ public class HydroDynamics
     public Vector2[] positions;
     public Vector2[] velocities;
     public Vector2[] accelerations;
+    public Vector2[] Bmoments;
     public float[] densities;
 
     public int gridLength = 1;
@@ -51,11 +58,23 @@ public class HydroDynamics
 
     public Vector2i[] neighbours = new Vector2i[9];
 
+    public Vector2 GetRandomVec2()
+    {
+        Random rand = new();
+
+        float x = 2f * rand.Next() - 1f;
+        float y = 2f * rand.Next() - 1f;
+        Vector2 randVec2 = new Vector2(x, y);
+
+        return Vector2.Normalize(randVec2);
+    }
+
     public void CreateBuffers()
     {
         positions = new Vector2[particleCount];
         velocities = new Vector2[particleCount];
         accelerations = new Vector2[particleCount];
+        Bmoments = new Vector2[particleCount];
         densities = new float[particleCount];
     }
 
@@ -75,6 +94,8 @@ public class HydroDynamics
                                             (bounds.Y - gridSpacing * gridLength) / 2);
 
                 positions[index] = new Vector2(gridSpacing * i + offset.X, gridSpacing * j + offset.Y) + spawnOffset;
+                //Bmoments[index] = Bstrength * GetRandomVec2(); // random field
+                Bmoments[index] = Bstrength * Bdir; // uniform field
             }
         }
     }
@@ -128,7 +149,7 @@ public class HydroDynamics
         return pressureConst * (MathF.Pow(y, gamma) - 1f) + pressureExt;
     }
 
-    public float ComputeDensityAtPoint(Vector2 position)
+    public float SampleDensity(Vector2 position)
     {
         float density = 0f;
 
@@ -147,8 +168,6 @@ public class HydroDynamics
 
             foreach (int j in grid[neighbour])
             {
-                //if (i == j) continue;
-
                 Vector2 offset = position - positions[j];
                 float dist = offset.Length();
                 float weight = Kernel(dist);
@@ -164,23 +183,24 @@ public class HydroDynamics
         Parallel.For(0, particleCount, i =>
         {
             Vector2 pos = positions[i];
-            densities[i] = ComputeDensityAtPoint(pos);
+            densities[i] = SampleDensity(pos);
         });
     }
 
     public void ComputeAccelerations()
     {
         float s2 = smoothingRadius * smoothingRadius;
-        float invTime = 1f / (deltaTime * deltaTime);
 
         Parallel.For(0, particleCount, i =>
         {
             Vector2 pos = positions[i];
             Vector2 vel = velocities[i];
+            Vector2 Bi = Bmoments[i];
             float rhoi = densities[i];
 
-            Vector2 force = new();
+            Vector2 pressure = new(); // force invoked by pressure gradient
             Vector2 laplacian = new(); // laplacian required for the viscosity contribution
+            Vector2 Bforce = new(); // magnetic field force
 
             int cellX = (int)(pos.X / smoothingRadius);
             int cellY = (int)(pos.Y / smoothingRadius);
@@ -201,24 +221,130 @@ public class HydroDynamics
 
                     Vector2 offset = pos - positions[j];
                     Vector2 velOffset = vel - velocities[j];
+                    Vector2 Bj = Bmoments[j];
 
                     float dist2 = offset.LengthSquared();
                     float rhoj = densities[j];
 
                     if (dist2 >= s2) continue;
 
-                    float dist = MathF.Max(MathF.Sqrt(dist2), 0.01f);
+                    float dist = MathF.Max(MathF.Sqrt(dist2), tol * smoothingRadius); // prevent particles physically overlapping
 
                     Vector2 dir = offset / dist;
                     Vector2 gradient = DerivativeKernel(dist) * dir;
 
                     float sharedPressure = DensityToPressure(rhoi) / (rhoi * rhoi) + DensityToPressure(rhoj) / (rhoj * rhoj);
+                    float sharedBPressure = Bi.LengthSquared() / (rhoi * rhoi) + Bj.LengthSquared() / (rhoj * rhoj) - Vector2.Dot(Bi, Bj) / (rhoi * rhoj);
 
-                    laplacian += 8f / rhoj * Vector2.Dot(offset, velOffset) / (dist2 + 0.01f * smoothingRadius) * gradient;
-                    force += - sharedPressure * gradient;
+                    pressure += sharedPressure * gradient;
+                    laplacian += 8f / rhoj * Vector2.Dot(offset, velOffset) / (dist2 + tol * smoothingRadius) * gradient;
+                    Bforce += sharedBPressure * gradient;
                 }
             }
-            accelerations[i] = particleMass * (force + laplacian * viscosity) / rhoi;
+            accelerations[i] = particleMass * (- pressure + laplacian * viscosity + Bforce / (mu * relMu)) / rhoi;
+        });
+    }
+
+    public float SampleDivB(Vector2 pos)
+    {
+        float s2 = smoothingRadius * smoothingRadius;
+
+        float divB = 0f;
+
+        int cellX = (int)(pos.X / smoothingRadius);
+        int cellY = (int)(pos.Y / smoothingRadius);
+
+        foreach (Vector2i cellOffset in neighbours)
+        {
+            int nx = cellX + cellOffset.X;
+            int ny = cellY + cellOffset.Y;
+
+            if (nx < 0 || ny < 0 || nx >= gridLength || ny >= gridHeight)
+                continue;
+
+            int neighbour = ny * gridLength + nx;
+
+            foreach (int j in grid[neighbour])
+            {
+                Vector2 offset = pos - positions[j];
+                float dist2 = offset.LengthSquared();
+
+                if (dist2 >= s2) continue;
+
+                float dist = MathF.Max(MathF.Sqrt(dist2), tol * smoothingRadius); // prevent particles physically overlapping
+
+                Vector2 dir = offset / dist;
+                Vector2 gradient = DerivativeKernel(dist) * dir;
+
+                Vector2 Bj = Bmoments[j];
+                float rhoj = densities[j];
+
+                Vector2 diff = Bj / rhoj;
+
+                divB += Vector2.Dot(diff, gradient);
+            }
+        }
+        return particleMass * divB;
+    }
+
+    public void ComputeBMoments()
+    {
+        float s2 = smoothingRadius * smoothingRadius;
+
+        Parallel.For(0, particleCount, i =>
+        {
+            Vector2 pos = positions[i];
+            Vector2 vel = velocities[i];
+            Vector2 Bi = Bmoments[i];
+            float rhoi = densities[i];
+
+            Vector2 dBdt = new();
+
+            int cellX = (int)(pos.X / smoothingRadius);
+            int cellY = (int)(pos.Y / smoothingRadius);
+
+            foreach (Vector2i cellOffset in neighbours)
+            {
+                int nx = cellX + cellOffset.X;
+                int ny = cellY + cellOffset.Y;
+
+                if (nx < 0 || ny < 0 || nx >= gridLength || ny >= gridHeight)
+                    continue;
+
+                int neighbour = ny * gridLength + nx;
+
+                foreach (int j in grid[neighbour])
+                {
+                    if (i == j) continue;
+
+                    Vector2 offset = pos - positions[j];
+                    Vector2 velOffset = vel - velocities[j];
+                    Vector2 Bj = Bmoments[j];
+
+                    float dist2 = offset.LengthSquared();
+
+                    if (dist2 >= s2) continue;
+
+                    float dist = MathF.Max(MathF.Sqrt(dist2), tol * smoothingRadius); // prevent particles physically overlapping
+
+                    Vector2 dir = offset / dist;
+                    Vector2 gradient = DerivativeKernel(dist) * dir;
+
+                    dBdt += -Vector2.Dot(gradient, Bj) * velOffset;
+                }
+            }
+            Bmoments[i] += particleMass * dBdt * deltaTime / (rhoi * rhoi);
+        });
+    }
+
+    public void ConstrainDivB()
+    {
+        Parallel.For(0, particleCount, i =>
+        {
+            Vector2 pos = positions[i];
+            float divB = SampleDivB(pos);
+
+            Bmoments[i] -= 0.1f * divB * deltaTime * Bmoments[i];
         });
     }
 
@@ -260,43 +386,47 @@ public class HydroDynamics
 
         ComputeDensities();
         ComputeAccelerations();
+        ComputeBMoments();
+        ConstrainDivB();
         ApplyBoundaryConditions();
 
-        for (uint i = 0; i < particleCount; i++)
-        {   
+        Parallel.For(0, particleCount, i =>
+        {
             velocities[i] += (accelerations[i] + g) * deltaTime;
             positions[i] += velocities[i] * deltaTime;
-        }
+        });
 
     }
 
     public void IntegrateVerlet()
     {
+        WriteHashMap();
+
         Vector2 g = new(0f, gravity);
 
-        for (uint i = 0; i < particleCount; i++)
+        Parallel.For(0, particleCount, i =>
         {
             positions[i] += velocities[i] * deltaTime + 0.5f * (accelerations[i] + g) * deltaTime * deltaTime;
-        }
-
-        WriteHashMap();
+        });
 
         Vector2[] prevAccelerations = (Vector2[]) accelerations.Clone();
 
         ComputeDensities();
         ComputeAccelerations();
+        ComputeBMoments();
+        ConstrainDivB();
         ApplyBoundaryConditions();
 
-        for (uint i = 0; i < particleCount; i++)
+        Parallel.For(0, particleCount, i =>
         {
-            velocities[i] += 0.5f * (prevAccelerations[i] + accelerations[i]) * deltaTime;
-        }
+            velocities[i] += 0.5f * (prevAccelerations[i] + accelerations[i] + 2f * g) * deltaTime;
+        });
     }
 
     public int GetCell(Vector2 pos)
     {
-        int cellX = (int)(pos.X / smoothingRadius);
-        int cellY = (int)(pos.Y / smoothingRadius);
+        int cellX = (int) (pos.X / smoothingRadius);
+        int cellY = (int) (pos.Y / smoothingRadius);
 
         cellX = Math.Clamp(cellX, 0, gridLength - 1);
         cellY = Math.Clamp(cellY, 0, gridHeight - 1);
@@ -306,18 +436,16 @@ public class HydroDynamics
 
     public void WriteHashMap()
     {
-        // Clear grid
-        for (int i = 0; i < grid.Length; i++)
+        Parallel.For(0, grid.Length, i =>
         {
             grid[i].Clear();
-        }
+        });
 
-        // Insert particles
-        for (int i = 0; i < particleCount; i++)
+        Parallel.For(0, particleCount, i =>
         {
             int cell = GetCell(positions[i]);
             grid[cell].Add(i);
-        }
+        });
     }
 }
 
